@@ -97,7 +97,7 @@ def cat_file(mode, sha1_prefix):
         print(len(data))
     elif mode == 'type':
         print(obj_type)
-    elif mode ?? 'pretty':
+    elif mode == 'pretty':
         if obj_type in ['commit', 'blob']:
             sys.stdout.buffer.write(data)
         elif obj_type == 'tree':
