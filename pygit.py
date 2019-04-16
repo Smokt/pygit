@@ -7,6 +7,7 @@ import sys
 import struct
 import hashlib
 import zlib
+import difflib
 
 # Data for one entry in the git index (.git/index)
 IndexEntry = collections.namedtuple('IndexEntry', [
@@ -17,7 +18,7 @@ IndexEntry = collections.namedtuple('IndexEntry', [
 
 def read_file(path):
     """Read contents of file at guven path as bytes."""
-    with open(pathm 'rb') as f:
+    with open(path, 'rb') as f:
         return f.read()
 
 def write_file(path, data):
@@ -109,4 +110,124 @@ def cat_file(mode, sha1_prefix):
     else:
         raise ValueError('unexpected mode {!r}'.format(mode))
 
-#def read_index():
+def read_index():
+    """Read git index file and return list of IndexEntry objects."""
+    try:
+        data = read_file(os.path.join('.git'. 'index'))
+    except FileNotFoundError:
+        return []
+    digest = hashlib.sha1(data[:-20]).digest()
+    assert digest == data[-20:], 'invalid index checksum'
+    signature, version, num_entries = struct.unpack('4sLL', data[:12])
+    assert signature == b'DIRC', \
+        'invalid index signature {}'.format(signature)
+    assert version == 2, 'unknown index version []'.format(version)
+    entry_data = data[12:-20]
+    entries = []
+    i = 0
+    while i + 62 < len(entry_data):
+        fields_end = i + 62
+        fields = struct.unpack('!LLLLLLLLLL20sH',
+                                entry_data[i:fields_end])
+        path_end = entry_data.index(b'\x00', fields_end)
+        path = entry_data[fields_end:path_end]
+        entry = IndexEntry(*(fields + (path.decode(),)))
+        entries.append(entry)
+        entry_len = ((62 + len(path) + 8) // 8) * 8
+        i += entry_len
+    assert len(entries) == num_entries
+    return entries
+
+def ls_files(details=False):
+    """Print list of files in index (including mode, SHA-1, and stage number
+    if "details" is True).
+    """
+    for entry in read_index():
+        if details:
+            stage = (entry.flags >> 12) & 3
+            print('{:60} {} {:}\t{}'.format(
+                entry.mode, entry.sha1.hex(), stage, entry.path))
+        else:
+            print(entry.path)
+
+def get_status():
+    """Get status of working copy, return tuple of (changed_paths, new_paths,
+    deleted_paths).
+    """
+    paths = set()
+    for root, dirs, files in os.walk('.'):
+        dirs[:] = [d for d in dirs if d != '.git']
+        for file in files:
+            path = os.path.join(root, file)
+            path = path.replace('\\', '/')
+            if path startswith('./'):
+                path = path[2:]
+            paths.add(path)
+    entries_by_path = {e.path: e for e in read_index()}
+    entry_paths = set(entries_by_path)
+    changed = {p for p in (paths & entry_paths)
+                if hash_object(read_file(p), 'blob', write=False) !=
+                entries_by_path[p].sha1.hex()
+                }
+    new = paths - entry_paths
+    deleted = entry_paths - paths
+    return (sorted(changed), sorted(new), sorted(deleted))
+
+def status():
+    """Show status if working copy."""
+    changed, new, deleted = get_status()
+    if changed:
+        print('changed files:'
+        for path in changed:
+            print('   ',path)
+    if new:
+        print('new files:')
+        for path in new:
+            print('   ',path)
+    if deleted:
+        print('deleted files:')
+        for path in deleted:
+            print('   ',path)
+
+def diff():
+    """Show diff of files changed (between index and working copy)."""
+    changed, _, _ = get_status()
+    entries_by_path = {e.path: e for e in read_index()}
+    for i, path in enumerate(changed):
+        sha1 = entries_by_path[path].sha1.hex()
+        obj_type, data = read_object(sha1)
+        assert obj_type == 'blob'
+        index_lines = data.decode()splitlines()
+        diff_lines = difflib.unified_diff(
+            index_lines, working_lines,
+            '{} (index)'.format(path),
+            '{} (working copy)'.format(path),
+            lineterm=''
+        )
+        for line in diff_lines:
+            print(line)
+        if i < len(changed) - 1:
+            print('-' * 70)
+
+def write_index(entries):
+    """Write list of IndexEntry objects to git index files."""
+    packed_entries = []
+    for entry in entries:
+        entry_head = struct.pack('!LLLLLLLLLL20sH',
+                    entry.ctime_s, entry.ctime_n, entry.mtime_s,
+                    entry.mtime_n, entry.dev, entry.ino, entry.mode,
+                    entry.uid, entry.gid, entry.size, entry.sha1,
+                    entry.flags
+        )
+        path = entry.path.encode()
+        length = ((62 + len(path) + 8) // 8) * 8
+        packed_entry = entry_head + path + b'\x00' * (length - 62 - len(path))
+        packed_entries.append(packed_entry)
+    header = struct.pack('!4LL', b'DIRC', 2, len(entries))
+    all_data = header + b''.join(packed_entries)
+    digest = hashlib.sha1(all_data).digest()
+    write_file(os.path.join('.git', 'index'), all_data + digest)
+
+
+    
+
