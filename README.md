@@ -5,7 +5,7 @@ Has no other objective than learning and self developing. Enjoy :)
 
 Source: https://benhoyt.com/writings/pygit/
 
-## Roadmap:
+## To Do:
 - [x] Create Repo
-- [ ] Commit
+- [x] Commit
 - [ ] Push
