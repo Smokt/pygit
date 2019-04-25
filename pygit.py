@@ -334,3 +334,19 @@ def http_request(url, username, password, data=None):
     opener = urllib.request.build_opener(auth_handler)
     f = opener.open(url, data=data)
     return f.read()
+
+def get_remote_master_hash(git_url, username, password):
+    """Get commit hash of remote master branch, return SHA-1 hex string or
+    None if no remote commits.
+    """
+    url = git_url + '/info/refs?service=git-receive-pack'
+    response = http_request(url, username, password)
+    lines = extract_lines(response)
+    assert lines[0] == b'# service=git-receive-pack\n'
+    assert lines[1] == b''
+    if lines[2][:40] == b'0' * 40:
+        return None
+    master_sha1, master_ref = lines[2].split(b'\x00')[0].split()
+    assert master_ref == b'refs/heads/master'
+    return master_sha1.decode()
+
